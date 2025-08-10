@@ -8,9 +8,8 @@
     "start": "node --experimental-specifier-resolution=node index.js"
   },
   "dependencies": {
-    "@whiskeysockets/baileys": "^4.5.0",
-    "node-fetch": "^3.3.1",
-    "@hapi/boom": "^10.0.1"
+    "@whiskeysockets/baileys": "^5.0.1",
+    "node-fetch": "^3.3.1"
   },
   "engines": {
     "node": ">=18"
