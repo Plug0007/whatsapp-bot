@@ -2,6 +2,7 @@ import pkg from '@adiwajshing/baileys';
 import P from 'pino';
 import fetch from 'node-fetch';
 import dotenv from 'dotenv';
+
 dotenv.config();
 
 const {
@@ -25,7 +26,7 @@ async function getGeminiResponse(prompt) {
         'Authorization': `Bearer ${GEMINI_API_KEY}`
       },
       body: JSON.stringify({
-        prompt: prompt,
+        prompt,
         max_tokens: 150
       })
     });
@@ -55,13 +56,15 @@ async function startSock() {
     }
 
     if (connection === 'close') {
-      const shouldReconnect =
-        (lastDisconnect?.error)?.output?.statusCode !== DisconnectReason.loggedOut;
-      console.log('Connection closed. Reconnecting:', shouldReconnect);
-      if (shouldReconnect) {
-        startSock();
-      } else {
+      const statusCode = lastDisconnect?.error?.output?.statusCode;
+      console.log('Connection closed with status code:', statusCode);
+
+      if (statusCode === DisconnectReason.loggedOut) {
         console.log('Logged out. Please delete auth_info.json and restart.');
+        process.exit(0); // stop bot after logout, manual restart needed
+      } else {
+        console.log('Reconnecting...');
+        setTimeout(() => startSock(), 5000); // wait 5 sec before reconnect to avoid rapid loops
       }
     } else if (connection === 'open') {
       console.log('Connected to WhatsApp');
@@ -72,6 +75,7 @@ async function startSock() {
 
   sock.ev.on('messages.upsert', async ({ messages, type }) => {
     if (type !== 'notify') return;
+
     const msg = messages[0];
     if (!msg.message || msg.key.fromMe) return;
 
@@ -94,4 +98,3 @@ async function startSock() {
 }
 
 startSock();
-
