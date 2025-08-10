@@ -1,79 +1,97 @@
-import makeWASocket, { useSingleFileAuthState } from "@whiskeysockets/baileys";
-import { Boom } from "@hapi/boom";
-import fetch from "node-fetch";
+import pkg from '@whiskeysockets/baileys';
+import P from 'pino';
+import fetch from 'node-fetch';
 
-const { state, saveState } = useSingleFileAuthState("./auth_info.json");
+const {
+  default: makeWASocket,
+  useSingleFileAuthState,
+  DisconnectReason,
+  fetchLatestBaileysVersion
+} = pkg;
 
-const GEMINI_API_KEY = "AIzaSyDaQu5JTSL9Yf1EE_4lqJJwLdNL2RJWHwU";
+const { state, saveState } = useSingleFileAuthState('./auth_info.json');
 
-async function generateGeminiReply(prompt) {
+// Replace this with your actual Gemini AI API key
+const GEMINI_API_KEY = 'AIzaSyDaQu5JTSL9Yf1EE_4lqJJwLdNL2RJWHwU';
+
+// Replace this with your actual Gemini API endpoint
+const GEMINI_API_URL = 'https://gemini.api.endpoint/v1/chat';
+
+async function getGeminiResponse(prompt) {
   try {
-    const response = await fetch("https://api.generativelanguage.google/v1beta2/models/chat-bison-001:generateMessage", {
-      method: "POST",
+    const res = await fetch(GEMINI_API_URL, {
+      method: 'POST',
       headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${GEMINI_API_KEY}`,
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${GEMINI_API_KEY}`
       },
       body: JSON.stringify({
-        prompt: {
-          text: prompt
-        }
-      }),
+        prompt: prompt,
+        max_tokens: 150
+      })
     });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error("Gemini API error:", errorText);
-      return "Sorry, I couldn't process that.";
-    }
-
-    const data = await response.json();
-    return data?.candidates?.[0]?.content || "Sorry, no reply generated.";
+    const data = await res.json();
+    return data.reply || 'Sorry, I could not understand that.';
   } catch (err) {
-    console.error("Error calling Gemini API:", err);
-    return "Sorry, an error occurred.";
+    console.error('Gemini API error:', err);
+    return 'Sorry, I am having trouble right now.';
   }
 }
 
-async function startBot() {
+async function startSock() {
+  const { version } = await fetchLatestBaileysVersion();
+
   const sock = makeWASocket({
-    auth: state,
+    version,
+    logger: P({ level: 'silent' }),
     printQRInTerminal: true,
+    auth: state,
   });
 
-  sock.ev.on("connection.update", (update) => {
-    const { connection, lastDisconnect } = update;
-    if (connection === "close") {
-      const shouldReconnect = (lastDisconnect?.error instanceof Boom && lastDisconnect?.error.output.statusCode !== 401);
-      console.log("Connection closed. Reconnecting?", shouldReconnect);
-      if (shouldReconnect) startBot();
-    } else if (connection === "open") {
-      console.log("WhatsApp connection established!");
+  sock.ev.on('connection.update', (update) => {
+    const { connection, lastDisconnect, qr } = update;
+
+    if (qr) {
+      console.log('Scan this QR code:\n', qr);
+    }
+
+    if (connection === 'close') {
+      const shouldReconnect =
+        (lastDisconnect.error)?.output?.statusCode !== DisconnectReason.loggedOut;
+      console.log('Connection closed. Reconnecting:', shouldReconnect);
+      if (shouldReconnect) {
+        startSock();
+      } else {
+        console.log('Logged out. Please delete auth_info.json and restart.');
+      }
+    } else if (connection === 'open') {
+      console.log('Connected to WhatsApp');
     }
   });
 
-  sock.ev.on("creds.update", saveState);
+  sock.ev.on('creds.update', saveState);
 
-  sock.ev.on("messages.upsert", async (m) => {
-    if (m.type !== "notify") return;
+  sock.ev.on('messages.upsert', async ({ messages, type }) => {
+    if (type !== 'notify') return;
+    const msg = messages[0];
+    if (!msg.message || msg.key.fromMe) return;
 
-    for (const msg of m.messages) {
-      if (!msg.message || msg.key.fromMe) continue;
+    const sender = msg.key.remoteJid;
+    const text = msg.message.conversation || msg.message.extendedTextMessage?.text || '';
 
-      // Skip groups
-      if (msg.key.remoteJid.endsWith("@g.us")) continue;
+    if (!text) return;
 
-      const text = msg.message.conversation || msg.message.extendedTextMessage?.text;
-      if (!text) continue;
+    // Only reply in private chats, ignore groups
+    if (!sender.endsWith('@s.whatsapp.net')) return;
 
-      console.log(`Received message: ${text}`);
+    console.log(`Message from ${sender}: ${text}`);
 
-      const replyText = await generateGeminiReply(text) + "\n\n- msg by Raelyaan";
+    const aiReply = await getGeminiResponse(text);
 
-      await sock.sendMessage(msg.key.remoteJid, { text: replyText });
-      console.log(`Sent reply: ${replyText}`);
-    }
+    const replyText = `${aiReply}\n\n- msg by Raelyaan`;
+
+    await sock.sendMessage(sender, { text: replyText });
   });
 }
 
-startBot();
+startSock();
