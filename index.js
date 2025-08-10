@@ -1,25 +1,25 @@
-import makeWASocket from '@whiskeysockets/baileys';
-import { useMultiFileAuthState } from '@whiskeysockets/baileys/lib/auth';
+import BaileysPkg from '@whiskeysockets/baileys';
+const { default: makeWASocket, useSingleFileAuthState, DisconnectReason } = BaileysPkg;
+
 import qrcode from 'qrcode-terminal';
 import express from 'express';
-import { existsSync, rmSync } from 'fs';
+import { existsSync, unlinkSync } from 'fs';
 
 const PORT = process.env.PORT || 3000;
 const app = express();
 
 const blockedNumbers = ['919876543210', '911234567890'];
+const { state, saveState } = useSingleFileAuthState('./auth_info.json');
 
 const knownUsers = new Set();
 
 async function startBot() {
-  const { state, saveCreds } = await useMultiFileAuthState('auth_info');
-
   const sock = makeWASocket({
     auth: state,
     printQRInTerminal: true
   });
 
-  sock.ev.on('creds.update', saveCreds);
+  sock.ev.on('creds.update', saveState);
 
   sock.ev.on('connection.update', ({ connection, lastDisconnect, qr }) => {
     if (qr) {
@@ -27,12 +27,12 @@ async function startBot() {
       console.log('Scan this QR code with your WhatsApp to authenticate.');
     }
     if (connection === 'close') {
-      if ((lastDisconnect?.error)?.output?.statusCode !== 401) {
+      if ((lastDisconnect?.error)?.output?.statusCode !== DisconnectReason.loggedOut) {
         console.log('Connection closed, reconnecting...');
         startBot();
       } else {
-        console.log('Logged out. Removing auth folder...');
-        if (existsSync('./auth_info')) rmSync('./auth_info', { recursive: true, force: true });
+        console.log('Logged out. Removing auth file...');
+        if (existsSync('./auth_info.json')) unlinkSync('./auth_info.json');
       }
     }
     if (connection === 'open') {
