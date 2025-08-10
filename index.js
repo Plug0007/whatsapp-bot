@@ -1,4 +1,6 @@
-import makeWASocket, { useSingleFileAuthState, DisconnectReason } from '@whiskeysockets/baileys';
+import pkg from '@whiskeysockets/baileys';
+const { default: makeWASocket, useSingleFileAuthState, DisconnectReason } = pkg;
+
 import qrcode from 'qrcode-terminal';
 import express from 'express';
 import { existsSync, unlinkSync } from 'fs';
@@ -6,7 +8,7 @@ import { existsSync, unlinkSync } from 'fs';
 const PORT = process.env.PORT || 3000;
 const app = express();
 
-const blockedNumbers = ['919876543210', '911234567890']; // Add blocked numbers here (country code only)
+const blockedNumbers = ['919876543210', '911234567890'];
 
 const { state, saveState } = useSingleFileAuthState('./auth_info.json');
 
