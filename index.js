@@ -1,4 +1,6 @@
-import makeWASocket, { useMultiFileAuthState, DisconnectReason } from '@whiskeysockets/baileys';
+import pkg from '@whiskeysockets/baileys';
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = pkg;
+
 import qrcode from 'qrcode-terminal';
 import express from 'express';
 import { existsSync, rmSync } from 'fs';
@@ -6,7 +8,7 @@ import { existsSync, rmSync } from 'fs';
 const PORT = process.env.PORT || 3000;
 const app = express();
 
-const blockedNumbers = ['919876543210', '911234567890']; // Your blocked numbers here
+const blockedNumbers = ['919876543210', '911234567890'];
 
 const knownUsers = new Set();
 
