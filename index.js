@@ -2,14 +2,12 @@ import pkg from '@adiwajshing/baileys';
 import P from 'pino';
 import fetch from 'node-fetch';
 import dotenv from 'dotenv';
-
 dotenv.config();
 
 const {
   default: makeWASocket,
   useSingleFileAuthState,
-  DisconnectReason,
-  fetchLatestBaileysVersion
+  DisconnectReason
 } = pkg;
 
 const { state, saveState } = useSingleFileAuthState('./auth_info.json');
@@ -17,6 +15,7 @@ const { state, saveState } = useSingleFileAuthState('./auth_info.json');
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GEMINI_API_URL = process.env.GEMINI_API_URL;
 
+// Simple Gemini API call function (adjust as per actual API)
 async function getGeminiResponse(prompt) {
   try {
     const res = await fetch(GEMINI_API_URL, {
@@ -26,7 +25,7 @@ async function getGeminiResponse(prompt) {
         'Authorization': `Bearer ${GEMINI_API_KEY}`
       },
       body: JSON.stringify({
-        prompt,
+        prompt: prompt,
         max_tokens: 150
       })
     });
@@ -39,7 +38,8 @@ async function getGeminiResponse(prompt) {
 }
 
 async function startSock() {
-  const { version } = await fetchLatestBaileysVersion();
+  // Fixed WhatsApp Web version - update this every 1-2 months if needed
+  const version = [2, 2324, 10]; 
 
   const sock = makeWASocket({
     version,
@@ -56,15 +56,13 @@ async function startSock() {
     }
 
     if (connection === 'close') {
-      const statusCode = lastDisconnect?.error?.output?.statusCode;
-      console.log('Connection closed with status code:', statusCode);
-
-      if (statusCode === DisconnectReason.loggedOut) {
-        console.log('Logged out. Please delete auth_info.json and restart.');
-        process.exit(0); // stop bot after logout, manual restart needed
+      const shouldReconnect =
+        (lastDisconnect?.error)?.output?.statusCode !== DisconnectReason.loggedOut;
+      console.log('Connection closed. Reconnecting:', shouldReconnect);
+      if (shouldReconnect) {
+        startSock();
       } else {
-        console.log('Reconnecting...');
-        setTimeout(() => startSock(), 5000); // wait 5 sec before reconnect to avoid rapid loops
+        console.log('Logged out. Delete auth_info.json to re-login.');
       }
     } else if (connection === 'open') {
       console.log('Connected to WhatsApp');
@@ -75,7 +73,6 @@ async function startSock() {
 
   sock.ev.on('messages.upsert', async ({ messages, type }) => {
     if (type !== 'notify') return;
-
     const msg = messages[0];
     if (!msg.message || msg.key.fromMe) return;
 
@@ -84,11 +81,12 @@ async function startSock() {
 
     if (!text) return;
 
-    // Reply only in private chats, ignore groups
+    // Reply only in private chats (no groups)
     if (!sender.endsWith('@s.whatsapp.net')) return;
 
     console.log(`Message from ${sender}: ${text}`);
 
+    // Call Gemini API (you can skip this or replace with a fixed reply for testing)
     const aiReply = await getGeminiResponse(text);
 
     const replyText = `${aiReply}\n\n- msg by Raelyaan`;
