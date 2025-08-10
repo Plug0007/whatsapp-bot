@@ -1,6 +1,8 @@
 import pkg from '@whiskeysockets/baileys';
 import P from 'pino';
 import fetch from 'node-fetch';
+import dotenv from 'dotenv';
+dotenv.config();
 
 const {
   default: makeWASocket,
@@ -11,11 +13,8 @@ const {
 
 const { state, saveState } = useSingleFileAuthState('./auth_info.json');
 
-// Replace this with your actual Gemini AI API key
-const GEMINI_API_KEY = 'AIzaSyDaQu5JTSL9Yf1EE_4lqJJwLdNL2RJWHwU';
-
-// Replace this with your actual Gemini API endpoint
-const GEMINI_API_URL = 'https://gemini.api.endpoint/v1/chat';
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+const GEMINI_API_URL = process.env.GEMINI_API_URL;
 
 async function getGeminiResponse(prompt) {
   try {
@@ -57,7 +56,7 @@ async function startSock() {
 
     if (connection === 'close') {
       const shouldReconnect =
-        (lastDisconnect.error)?.output?.statusCode !== DisconnectReason.loggedOut;
+        (lastDisconnect?.error)?.output?.statusCode !== DisconnectReason.loggedOut;
       console.log('Connection closed. Reconnecting:', shouldReconnect);
       if (shouldReconnect) {
         startSock();
@@ -81,7 +80,7 @@ async function startSock() {
 
     if (!text) return;
 
-    // Only reply in private chats, ignore groups
+    // Reply only in private chats, ignore groups
     if (!sender.endsWith('@s.whatsapp.net')) return;
 
     console.log(`Message from ${sender}: ${text}`);
