@@ -1,8 +1,6 @@
 {
   "name": "whatsapp-bot",
   "version": "1.0.0",
-  "description": "WhatsApp bot using baileys and Gemini API",
-  "main": "index.js",
   "type": "module",
   "scripts": {
     "start": "node index.js"
@@ -11,10 +9,9 @@
     "node": ">=18"
   },
   "dependencies": {
-    "@adiwajshing/baileys": "^4.4.0",
-    "pino": "^8.15.0",
-    "@hapi/boom": "^10.0.0",
-    "node-fetch": "^2.6.7",
-    "dotenv": "^16.3.1"
+    "@adiwajshing/baileys": "^5.0.1",
+    "pino": "^8.0.0",
+    "node-fetch": "^3.3.1",
+    "dotenv": "^16.0.3"
   }
 }
