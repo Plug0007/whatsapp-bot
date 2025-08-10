@@ -4,13 +4,47 @@ const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = pkg;
 import qrcode from 'qrcode-terminal';
 import express from 'express';
 import { existsSync, rmSync } from 'fs';
+import axios from 'axios';
 
 const PORT = process.env.PORT || 3000;
 const app = express();
 
 const blockedNumbers = ['919876543210', '911234567890'];
 
-const knownUsers = new Set();
+const userStates = new Map();  // 0 = ask name, 1 = got name ask concern, 2 = ongoing concerns
+const userNames = new Map();
+
+const signature = " - msg by Raelyaan";
+
+const OPENAI_API_KEY = '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';  // <-- Put your key here
+
+async function getAIReply(userName, userMessage) {
+  const prompt = `You are a helpful assistant chatting with a user named ${userName}. Respond kindly and helpfully to this message: "${userMessage}"`;
+
+  try {
+    const response = await axios.post('https://api.openai.com/v1/chat/completions', {
+      model: 'gpt-4o-mini',
+      messages: [
+        { role: 'system', content: 'You are a helpful assistant.' },
+        { role: 'user', content: prompt },
+      ],
+      max_tokens: 150,
+      temperature: 0.7,
+    }, {
+      headers: {
+        'Authorization': `Bearer ${OPENAI_API_KEY}`,
+        'Content-Type': 'application/json',
+      }
+    });
+
+    const aiText = response.data.choices[0].message.content.trim();
+    return aiText;
+
+  } catch (error) {
+    console.error('OpenAI API error:', error.response?.data || error.message);
+    return "Sorry, I couldn't process your message at the moment.";
+  }
+}
 
 async function startBot() {
   const { state, saveCreds } = await useMultiFileAuthState('auth_info');
@@ -52,19 +86,49 @@ async function startBot() {
       return;
     }
 
-    let reply;
-    if (!knownUsers.has(sender)) {
-      knownUsers.add(sender);
-      reply = `Hello ${sender}! Welcome to the WhatsApp bot. - msg by Raelyaan`;
+    let text = '';
+    if (msg.message.conversation) {
+      text = msg.message.conversation;
+    } else if (msg.message.extendedTextMessage && msg.message.extendedTextMessage.text) {
+      text = msg.message.extendedTextMessage.text;
     } else {
-      reply = `Welcome back, ${sender}! How can I assist you today? - msg by Raelyaan`;
+      // Ignore other message types
+      return;
     }
 
-    try {
-      await sock.sendMessage(msg.key.remoteJid, { text: reply });
-      console.log(`Replied to ${sender}: ${reply}`);
-    } catch (err) {
-      console.error('Error sending message:', err);
+    if (!userStates.has(sender)) {
+      userStates.set(sender, 0);
+      await sock.sendMessage(msg.key.remoteJid, { text: `Hello! What's your name?${signature}` });
+      console.log(`Asked name from ${sender}`);
+      return;
+    }
+
+    const state = userStates.get(sender);
+
+    if (state === 0) {
+      userNames.set(sender, text.trim());
+      userStates.set(sender, 1);
+      await sock.sendMessage(msg.key.remoteJid, { text: `Hello ${text.trim()}! Owner will reply ASAP. Please drop your concern now.${signature}` });
+      console.log(`Got name from ${sender}: ${text.trim()}`);
+      return;
+    }
+
+    if (state === 1) {
+      userStates.set(sender, 2);
+      await sock.sendMessage(msg.key.remoteJid, { text: `Thank you for your concern, ${userNames.get(sender)}. Owner will get back to you soon.${signature}` });
+      console.log(`Received first concern from ${sender}: ${text.trim()}`);
+      return;
+    }
+
+    if (state === 2) {
+      // For ongoing messages, get AI reply
+      const userName = userNames.get(sender);
+      const aiReply = await getAIReply(userName, text);
+      const replyWithSignature = `${aiReply}${signature}`;
+
+      await sock.sendMessage(msg.key.remoteJid, { text: replyWithSignature });
+      console.log(`AI replied to ${sender}: ${aiReply}`);
+      return;
     }
   });
 }
