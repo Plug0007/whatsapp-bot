@@ -1,4 +1,4 @@
-import pkg from '@whiskeysockets/baileys';
+import pkg from '@adiwajshing/baileys';
 import P from 'pino';
 import fetch from 'node-fetch';
 import dotenv from 'dotenv';
@@ -94,3 +94,4 @@ async function startSock() {
 }
 
 startSock();
+
