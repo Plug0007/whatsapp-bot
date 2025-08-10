@@ -11,9 +11,9 @@
     "node": ">=18"
   },
   "dependencies": {
-    "@whiskeysockets/baileys": "*",
-    "@hapi/boom": "*",
-    "node-fetch": "*",
-    "dotenv": "*"
+    "@whiskeysockets/baileys": "^4.5.8",
+    "@hapi/boom": "^10.0.0",
+    "node-fetch": "^2.6.7",
+    "dotenv": "^16.3.1"
   }
 }
