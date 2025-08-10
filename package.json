@@ -1,17 +1,19 @@
 {
-  "name": "whatsapp-gemini-bot",
+  "name": "whatsapp-bot",
   "version": "1.0.0",
-  "type": "module",
+  "description": "WhatsApp bot using baileys and Gemini API",
   "main": "index.js",
+  "type": "module",
   "scripts": {
     "start": "node index.js"
   },
-  "dependencies": {
-    "@whiskeysockets/baileys": "^4.5.8",
-    "@hapi/boom": "^10.0.0",
-    "node-fetch": "^3.3.2"
-  },
   "engines": {
     "node": ">=18"
+  },
+  "dependencies": {
+    "@whiskeysockets/baileys": "*",
+    "@hapi/boom": "*",
+    "node-fetch": "*",
+    "dotenv": "*"
   }
 }
