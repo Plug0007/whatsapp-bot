@@ -1,7 +1,6 @@
-// bot.js
+// geminiBotFullSpecial.js
 import pkg from '@whiskeysockets/baileys';
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = pkg;
-
 import qrcode from 'qrcode-terminal';
 import express from 'express';
 import { existsSync } from 'fs';
@@ -10,58 +9,53 @@ import axios from 'axios';
 const PORT = process.env.PORT || 3000;
 const app = express();
 
-const blockedNumbers = ['919876543210', '911234567890']; 
+// Blocked numbers (optional)
+const blockedNumbers = [];
+
+// User session states and memory
 const userStates = new Map();
 const userNames = new Map();
+const userConversations = new Map(); // store last messages for context
 const signature = " - msg by Raelyaan";
 
-// ===== Hugging Face =====
+// Hugging Face config
 const HF_API_KEY = process.env.HF_API_KEY || "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";
 const HF_MODEL = "mistralai/Mistral-7B-Instruct-v0.2";
 
-// ===== Math Helpers =====
-function isSimpleMathExpression(s) {
-  return /^[0-9\s\.\+\-\*\/\^\(\)]+$/.test(s.trim());
-}
+// Special branded keywords
+const specialKeywords = {
+  "raelyaan": "The word 'Raelyaan' is a trademark by Aadil Asif Badhra. It cannot be used without permission."
+};
 
-function safeEvalMath(expr) {
-  try {
-    const sanitized = expr.replace(/\^/g, '**');
-    if (!/^[0-9\s\.\+\-\*\/\(\)\*]{1,500}$/.test(sanitized)) return null;
-    // eslint-disable-next-line no-new-func
-    const result = Function(`"use strict"; return (${sanitized})`)();
-    if (typeof result === 'number' && Number.isFinite(result)) return result.toString();
-    return null;
-  } catch { return null; }
-}
-
-// ===== Hugging Face Reply Function =====
-async function getAIReply(userName, userMessage) {
-  // Custom dynamic answers
-  const keyword = userMessage.toLowerCase();
-  if (keyword.includes('raelyaan')) {
-    return "Raelyaan is a trademark by Aadil Asif Badhra. It represents a brand/identity.";
+// Dynamic AI reply with keyword check
+async function getAIReply(userName, userMessage, context=[]) {
+  // Check for special keywords first
+  for (const keyword in specialKeywords) {
+    if (userMessage.toLowerCase().includes(keyword.toLowerCase())) {
+      return specialKeywords[keyword];
+    }
   }
 
-  if (isSimpleMathExpression(userMessage)) {
-    const mathAns = safeEvalMath(userMessage);
-    if (mathAns !== null) return `${userMessage.trim()} = ${mathAns}`;
-  }
+  // If no special keyword, generate AI answer
+  const fullPrompt = `
+You are a friendly, intelligent assistant talking to ${userName}.
+Previous conversation context:
+${context.map((m,i)=>`User: ${m.user}\nBot: ${m.bot}`).join('\n')}
+Current question: "${userMessage}"
+Provide a clear, accurate, and friendly answer.
+`;
 
-  const prompt = `You are a helpful AI assistant. A user named ${userName} asked: "${userMessage}". Provide a clear, accurate, and friendly answer.`;
   try {
     const response = await axios.post(
       `https://api-inference.huggingface.co/models/${HF_MODEL}`,
-      { inputs: prompt },
+      { inputs: fullPrompt },
       { headers: { Authorization: `Bearer ${HF_API_KEY}`, "Content-Type": "application/json" }, timeout: 120000 }
     );
 
     let aiText = "";
-    if (Array.isArray(response.data) && response.data.length > 0) {
-      aiText = response.data[0]?.generated_text ?? "";
-    } else if (response.data?.generated_text) {
-      aiText = response.data.generated_text;
-    } else aiText = JSON.stringify(response.data).slice(0,2000);
+    if (Array.isArray(response.data) && response.data.length>0) aiText = response.data[0]?.generated_text ?? "";
+    else if (response.data?.generated_text) aiText = response.data.generated_text;
+    else aiText = JSON.stringify(response.data).slice(0,2000);
 
     return (aiText || "Sorry, I couldn't generate a reply.").trim();
   } catch (err) {
@@ -70,11 +64,10 @@ async function getAIReply(userName, userMessage) {
   }
 }
 
-// ===== WhatsApp Bot =====
+// WhatsApp bot main function
 async function startBot() {
   const { state, saveCreds } = await useMultiFileAuthState('auth_info');
   const sock = makeWASocket({ auth: state, printQRInTerminal: false });
-
   sock.ev.on('creds.update', saveCreds);
 
   let qrTimeout = null;
@@ -82,16 +75,14 @@ async function startBot() {
 
   sock.ev.on('connection.update', ({ connection, lastDisconnect, qr }) => {
     if (qr) {
-      console.log("Scan this QR within 1 minute if not logged in:");
+      console.log("Scan QR within 1 minute:");
       qrcode.generate(qr, { small: true });
       qrScanned = false;
 
       if (qrTimeout) clearTimeout(qrTimeout);
       qrTimeout = setTimeout(() => {
-        if (!qrScanned) {
-          console.log("QR timeout. Using existing auth info if available...");
-        }
-      }, 60000); // 1 min
+        if (!qrScanned) console.log("QR timeout. Using existing auth info if available...");
+      }, 60000);
     }
 
     if (connection === 'open') {
@@ -122,6 +113,7 @@ async function startBot() {
     else return;
     text = text.trim();
 
+    // New user: ask name
     if (!userStates.has(sender)) {
       userStates.set(sender, 0);
       await sock.sendMessage(msg.key.remoteJid, { text: `Hello! What's your name?${signature}` });
@@ -129,29 +121,40 @@ async function startBot() {
     }
 
     const state = userStates.get(sender);
+    // Get user name
     if (state === 0) {
       userNames.set(sender, text);
       userStates.set(sender, 1);
-      await sock.sendMessage(msg.key.remoteJid, { text: `Hello ${text}! You can now ask anything — math, science, general knowledge.${signature}` });
+      await sock.sendMessage(msg.key.remoteJid, { text: `Hello ${text}! You can now ask anything dynamically.${signature}` });
       return;
     }
 
+    // Confirm ready
     if (state === 1) {
       userStates.set(sender, 2);
       await sock.sendMessage(msg.key.remoteJid, { text: `Great! I'm ready to answer your questions, ${userNames.get(sender)}. Ask me anything.${signature}` });
       return;
     }
 
+    // Dynamic Gemini-like Q&A
     if (state === 2) {
-      const aiReply = await getAIReply(userNames.get(sender) || "User", text);
+      const name = userNames.get(sender) || "User";
+      const context = userConversations.get(sender) || [];
+
+      const aiReply = await getAIReply(name, text, context);
+
+      // Store last 5 messages for multi-turn context
+      context.push({ user: text, bot: aiReply });
+      if (context.length > 5) context.shift();
+      userConversations.set(sender, context);
+
       await sock.sendMessage(msg.key.remoteJid, { text: `${aiReply}${signature}` });
-      return;
     }
   });
 }
 
-// ===== Express Server =====
-app.get('/', (req, res) => res.send('WhatsApp Q&A Bot running!'));
+// Express server
+app.get('/', (req, res) => res.send('WhatsApp Gemini-like Bot with branded keyword handling running!'));
 
 app.listen(PORT, () => {
   console.log(`Server started on port ${PORT}`);
