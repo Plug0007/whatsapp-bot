@@ -1,141 +1,159 @@
+// bot.js
 import pkg from '@whiskeysockets/baileys';
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = pkg;
 
 import qrcode from 'qrcode-terminal';
 import express from 'express';
-import { existsSync, rmSync } from 'fs';
+import { existsSync } from 'fs';
 import axios from 'axios';
 
 const PORT = process.env.PORT || 3000;
 const app = express();
 
-const blockedNumbers = ['919876543210', '911234567890'];
-
-const userStates = new Map();  // 0 = ask name, 1 = got name ask concern, 2 = ongoing concerns
+const blockedNumbers = ['919876543210', '911234567890']; 
+const userStates = new Map();
 const userNames = new Map();
-
 const signature = " - msg by Raelyaan";
 
-const OPENAI_API_KEY = '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';  // <-- Put your key here
+// ===== Hugging Face =====
+const HF_API_KEY = process.env.HF_API_KEY || "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";
+const HF_MODEL = "mistralai/Mistral-7B-Instruct-v0.2";
 
-async function getAIReply(userName, userMessage) {
-  const prompt = `You are a helpful assistant chatting with a user named ${userName}. Respond kindly and helpfully to this message: "${userMessage}"`;
+// ===== Math Helpers =====
+function isSimpleMathExpression(s) {
+  return /^[0-9\s\.\+\-\*\/\^\(\)]+$/.test(s.trim());
+}
 
+function safeEvalMath(expr) {
   try {
-    const response = await axios.post('https://api.openai.com/v1/chat/completions', {
-      model: 'gpt-4o-mini',
-      messages: [
-        { role: 'system', content: 'You are a helpful assistant.' },
-        { role: 'user', content: prompt },
-      ],
-      max_tokens: 150,
-      temperature: 0.7,
-    }, {
-      headers: {
-        'Authorization': `Bearer ${OPENAI_API_KEY}`,
-        'Content-Type': 'application/json',
-      }
-    });
+    const sanitized = expr.replace(/\^/g, '**');
+    if (!/^[0-9\s\.\+\-\*\/\(\)\*]{1,500}$/.test(sanitized)) return null;
+    // eslint-disable-next-line no-new-func
+    const result = Function(`"use strict"; return (${sanitized})`)();
+    if (typeof result === 'number' && Number.isFinite(result)) return result.toString();
+    return null;
+  } catch { return null; }
+}
 
-    const aiText = response.data.choices[0].message.content.trim();
-    return aiText;
+// ===== Hugging Face Reply Function =====
+async function getAIReply(userName, userMessage) {
+  // Custom dynamic answers
+  const keyword = userMessage.toLowerCase();
+  if (keyword.includes('raelyaan')) {
+    return "Raelyaan is a trademark by Aadil Asif Badhra. It represents a brand/identity.";
+  }
 
-  } catch (error) {
-    console.error('OpenAI API error:', error.response?.data || error.message);
+  if (isSimpleMathExpression(userMessage)) {
+    const mathAns = safeEvalMath(userMessage);
+    if (mathAns !== null) return `${userMessage.trim()} = ${mathAns}`;
+  }
+
+  const prompt = `You are a helpful AI assistant. A user named ${userName} asked: "${userMessage}". Provide a clear, accurate, and friendly answer.`;
+  try {
+    const response = await axios.post(
+      `https://api-inference.huggingface.co/models/${HF_MODEL}`,
+      { inputs: prompt },
+      { headers: { Authorization: `Bearer ${HF_API_KEY}`, "Content-Type": "application/json" }, timeout: 120000 }
+    );
+
+    let aiText = "";
+    if (Array.isArray(response.data) && response.data.length > 0) {
+      aiText = response.data[0]?.generated_text ?? "";
+    } else if (response.data?.generated_text) {
+      aiText = response.data.generated_text;
+    } else aiText = JSON.stringify(response.data).slice(0,2000);
+
+    return (aiText || "Sorry, I couldn't generate a reply.").trim();
+  } catch (err) {
+    console.error("HF error:", err.response?.data || err.message);
     return "Sorry, I couldn't process your message at the moment.";
   }
 }
 
+// ===== WhatsApp Bot =====
 async function startBot() {
   const { state, saveCreds } = await useMultiFileAuthState('auth_info');
-
-  const sock = makeWASocket({
-    auth: state,
-    printQRInTerminal: true
-  });
+  const sock = makeWASocket({ auth: state, printQRInTerminal: false });
 
   sock.ev.on('creds.update', saveCreds);
 
+  let qrTimeout = null;
+  let qrScanned = false;
+
   sock.ev.on('connection.update', ({ connection, lastDisconnect, qr }) => {
     if (qr) {
+      console.log("Scan this QR within 1 minute if not logged in:");
       qrcode.generate(qr, { small: true });
-      console.log('Scan this QR code with your WhatsApp to authenticate.');
+      qrScanned = false;
+
+      if (qrTimeout) clearTimeout(qrTimeout);
+      qrTimeout = setTimeout(() => {
+        if (!qrScanned) {
+          console.log("QR timeout. Using existing auth info if available...");
+        }
+      }, 60000); // 1 min
     }
-    if (connection === 'close') {
-      if ((lastDisconnect?.error)?.output?.statusCode !== DisconnectReason.loggedOut) {
-        console.log('Connection closed, reconnecting...');
-        startBot();
-      } else {
-        console.log('Logged out. Removing auth folder...');
-        if (existsSync('./auth_info')) rmSync('./auth_info', { recursive: true, force: true });
-      }
-    }
+
     if (connection === 'open') {
-      console.log('WhatsApp connection established!');
+      qrScanned = true;
+      console.log('WhatsApp connected!');
+    }
+
+    if (connection === 'close') {
+      const shouldReconnect = (lastDisconnect?.error)?.output?.statusCode !== DisconnectReason.loggedOut;
+      if (shouldReconnect) {
+        console.log('Connection lost, reconnecting...');
+        setTimeout(() => startBot().catch(console.error), 2000);
+      } else {
+        console.log('Logged out. Delete auth_info to re-scan QR manually.');
+      }
     }
   });
 
   sock.ev.on('messages.upsert', async ({ messages }) => {
     const msg = messages[0];
-    if (!msg.message || msg.key.fromMe) return;
-
-    const sender = msg.key.remoteJid.replace('@s.whatsapp.net', '');
-
-    if (blockedNumbers.includes(sender)) {
-      console.log(`Blocked message from ${sender}`);
-      return;
-    }
+    if (!msg || !msg.message || msg.key.fromMe) return;
+    const sender = (msg.key.remoteJid || '').replace('@s.whatsapp.net','');
+    if (blockedNumbers.includes(sender)) return;
 
     let text = '';
-    if (msg.message.conversation) {
-      text = msg.message.conversation;
-    } else if (msg.message.extendedTextMessage && msg.message.extendedTextMessage.text) {
-      text = msg.message.extendedTextMessage.text;
-    } else {
-      // Ignore other message types
-      return;
-    }
+    if (msg.message.conversation) text = msg.message.conversation;
+    else if (msg.message.extendedTextMessage?.text) text = msg.message.extendedTextMessage.text;
+    else return;
+    text = text.trim();
 
     if (!userStates.has(sender)) {
       userStates.set(sender, 0);
       await sock.sendMessage(msg.key.remoteJid, { text: `Hello! What's your name?${signature}` });
-      console.log(`Asked name from ${sender}`);
       return;
     }
 
     const state = userStates.get(sender);
-
     if (state === 0) {
-      userNames.set(sender, text.trim());
+      userNames.set(sender, text);
       userStates.set(sender, 1);
-      await sock.sendMessage(msg.key.remoteJid, { text: `Hello ${text.trim()}! Owner will reply ASAP. Please drop your concern now.${signature}` });
-      console.log(`Got name from ${sender}: ${text.trim()}`);
+      await sock.sendMessage(msg.key.remoteJid, { text: `Hello ${text}! You can now ask anything — math, science, general knowledge.${signature}` });
       return;
     }
 
     if (state === 1) {
       userStates.set(sender, 2);
-      await sock.sendMessage(msg.key.remoteJid, { text: `Thank you for your concern, ${userNames.get(sender)}. Owner will get back to you soon.${signature}` });
-      console.log(`Received first concern from ${sender}: ${text.trim()}`);
+      await sock.sendMessage(msg.key.remoteJid, { text: `Great! I'm ready to answer your questions, ${userNames.get(sender)}. Ask me anything.${signature}` });
       return;
     }
 
     if (state === 2) {
-      // For ongoing messages, get AI reply
-      const userName = userNames.get(sender);
-      const aiReply = await getAIReply(userName, text);
-      const replyWithSignature = `${aiReply}${signature}`;
-
-      await sock.sendMessage(msg.key.remoteJid, { text: replyWithSignature });
-      console.log(`AI replied to ${sender}: ${aiReply}`);
+      const aiReply = await getAIReply(userNames.get(sender) || "User", text);
+      await sock.sendMessage(msg.key.remoteJid, { text: `${aiReply}${signature}` });
       return;
     }
   });
 }
 
-app.get('/', (req, res) => res.send('WhatsApp Bot is running!'));
+// ===== Express Server =====
+app.get('/', (req, res) => res.send('WhatsApp Q&A Bot running!'));
 
 app.listen(PORT, () => {
   console.log(`Server started on port ${PORT}`);
-  startBot();
+  startBot().catch(err => { console.error(err); process.exit(1); });
 });
